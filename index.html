@@ -33,12 +33,17 @@ button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:v
 .seg button:first-child{border-radius:2px 0 0 2px;margin-left:0}
 .seg button:last-child{border-radius:0 2px 2px 0}
 #png{font-weight:700}
+#plate{position:absolute;top:calc(14px + env(safe-area-inset-top,0px));left:max(16px,env(safe-area-inset-left,0px));max-width:min(330px,48vw);display:grid;gap:3px;padding:8px 11px 9px;border:1px solid color-mix(in srgb,var(--ink) 40%,transparent);pointer-events:none;transition:opacity .4s}
+#plate small{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;opacity:.7}
+#plate b{font-size:14px;line-height:1.25;text-wrap:balance}
+#plate span{font-size:10.5px;opacity:.8;font-variant-numeric:tabular-nums}
+@media (max-width:520px){ #plate{padding:6px 8px;max-width:52vw} #plate b{font-size:12px} #plate span{font-size:9.5px} }
 #err{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px}
 @media (max-width:520px){ .sl input{width:70px} #bar{gap:8px 12px} .seg button{padding:6px 7px} }
 @media (prefers-reduced-motion:reduce){ body{transition:none} }
 </style>
 
-<div id="stage"><div id="grain"></div></div>
+<div id="stage"><div id="grain"></div><div id="plate"><small id="pk"></small><b id="pn"></b><span id="pm"></span></div></div>
 <div id="bar">
   <div class="grp"><input id="seed" type="text" spellcheck="false" autocomplete="off" aria-label="Seed"><button id="copy">copy link</button></div>
   <button id="new">new tower</button>
@@ -122,6 +127,16 @@ function generate(seed, n, chaos) {
   const gr = stream(seed, 'ground'), gk = gr();
   const ground = { kind: gk < 0.28 ? 'plaza' : gk < 0.58 ? 'sea' : gk < 0.79 ? 'dunes' : 'meadow', rnd: Array.from({ length: 90 }, () => +gr().toFixed(4)) };
   return { seed, n, chaos: c, blocks, ramp, ramp2, roads, ground, top: +top.toFixed(3) };
+}
+const ADJ = ['Ascending', 'Inverted', 'Patient', 'Unfinished', 'Silent', 'Recursive', 'Borrowed', 'Hollow', 'Sleepless', 'Seventh', 'Folded', 'Wandering', 'Salt', 'Amber', 'Paper', 'Lantern', 'Drowned', 'Upward'];
+const NOUN = ['Archive', 'Stair', 'Lighthouse', 'Cistern', 'Observatory', 'Granary', 'Belfry', 'Library', 'Ministry', 'Aviary', 'Theatre', 'Monastery', 'Mill', 'Almanac', 'Customs House', 'Clocktower'];
+const SYL = ['ka', 'vel', 'or', 'is', 'mar', 'tu', 'lo', 'ren', 'ash', 'qui', 'bel', 'nor', 'sa', 'dre', 'um', 'th'];
+function towerName(seed) {
+  const r = stream(seed, 'name'), pick = a => a[Math.floor(r() * a.length)];
+  let place = ''; for (let i = 0, k = 2 + Math.floor(r() * 2); i < k; i++) place += pick(SYL);
+  place = place[0].toUpperCase() + place.slice(1);
+  const a = pick(ADJ), n = pick(NOUN), f = r();
+  return f < 0.34 ? `The ${a} ${n}` : f < 0.67 ? `The ${n} of ${place}` : `Tower of the ${a} ${n}`;
 }
 // </gen>
 
@@ -423,7 +438,7 @@ function buildRamps(P) {
     const tg = raw[Math.min(N, j + 1)].clone().sub(raw[Math.max(0, j - 1)]), n = new THREE.Vector3().crossVectors(tg, UP).normalize();
     const e = R(p.y); if (n.x * (p.x - e[0]) + n.z * (p.z - e[1]) < 0) n.negate(); return { p, n };
   });
-  part(sweepGeo(pts, RAMP_PROF), 'plain', 's');
+  part(sweepGeo(pts, RAMP_PROF), 'plain', 's'); rampPath = pts;
   const end = pts[N];   // upper terrace, with a door arriving at the wrong height
   part(boxGeo(2, 0.2, 2).translate(end.p.x + end.n.x * 0.4, r.y1 - 0.1, end.p.z + end.n.z * 0.4), 'plain', 's');
   door(end.p.clone().addScaledVector(end.n, -0.55), end.n, r.y1 + 0.45);
@@ -504,7 +519,67 @@ function colorize(g, ramp) {
 function disposeTower() {
   for (const o of [...tower.children]) { o.geometry.dispose(); tower.remove(o); }
 }
-function build() {
+// ===== life: inhabitants who climb forever, birds over the top =====
+let rampPath = [], walkers = [], birds = [];
+const lifeMat = new THREE.MeshBasicMaterial({ color: 0x333333 }), lampMat = new THREE.MeshBasicMaterial({ color: 0xffb25c });
+const figGeo = mergeGeometries([new THREE.BoxGeometry(0.15, 0.28, 0.1).translate(0, 0.16, 0), new THREE.BoxGeometry(0.11, 0.11, 0.11).translate(0, 0.37, 0)]);
+const wing = s => new THREE.BoxGeometry(0.34, 0.02, 0.09).translate(s * 0.17, 0, 0).rotateZ(s * 0.45);
+const MAXW = 12, MAXB = 6;
+const walkMesh = new THREE.InstancedMesh(figGeo, lifeMat, MAXW), lampMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.07, 0.09, 0.07).translate(0.12, 0.2, 0.05), lampMat, MAXW);
+const birdMesh = new THREE.InstancedMesh(mergeGeometries([wing(-1), wing(1)]), lifeMat, MAXB);
+for (const m of [walkMesh, lampMesh, birdMesh]) { m.frustumCulled = false; m.castShadow = m !== lampMesh; m.count = 0; scene.add(m); }
+function makeLife(P) {
+  const r = stream(P.seed, 'life');
+  walkers = Array.from({ length: 3 + Math.floor(r() * 7) }, () => ({ s: r(), v: (0.006 + r() * 0.008) * (r() < 0.3 ? -1 : 1), lat: (r() - 0.5) * 0.42, ph: r() * 6.28 }));
+  birds = Array.from({ length: Math.floor(r() * (2 + 4 * P.chaos)) }, () => ({ a: r() * 6.28, rad: 3.5 + r() * 4, y: P.top + 1 + r() * 3, w: (0.22 + r() * 0.2) * (r() < 0.5 ? -1 : 1), ph: r() * 6.28 }));
+  walkMesh.count = lampMesh.count = walkers.length; birdMesh.count = birds.length;
+}
+const dummy = new THREE.Object3D(), still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+function updateLife(t) {
+  const N = rampPath.length - 1; if (N < 1) return;
+  walkers.forEach((w, i) => {
+    const s = ((w.s + w.v * t) % 1 + 1) % 1, f = s * N, i0 = Math.min(N - 1, Math.floor(f)), a = rampPath[i0], b = rampPath[i0 + 1];
+    dummy.position.lerpVectors(a.p, b.p, f - i0).addScaledVector(a.n, w.lat);
+    dummy.position.y += Math.abs(Math.sin(t * 7 + w.ph)) * 0.035;
+    const dx = (b.p.x - a.p.x) * Math.sign(w.v), dz = (b.p.z - a.p.z) * Math.sign(w.v);
+    dummy.rotation.set(0, Math.atan2(dx, dz), 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix();
+    walkMesh.setMatrixAt(i, dummy.matrix); lampMesh.setMatrixAt(i, dummy.matrix);
+  });
+  birds.forEach((b, i) => {
+    const a = b.a + b.w * t;
+    dummy.position.set(Math.cos(a) * b.rad, b.y + Math.sin(t * 0.7 + b.ph) * 0.35, Math.sin(a) * b.rad);
+    dummy.rotation.set(0, -a + (b.w > 0 ? 0 : Math.PI), 0); dummy.scale.set(1, 0.25 + Math.abs(Math.sin(t * 5 + b.ph)) * 1.4, 1); dummy.updateMatrix();
+    birdMesh.setMatrixAt(i, dummy.matrix);
+  });
+  walkMesh.instanceMatrix.needsUpdate = lampMesh.instanceMatrix.needsUpdate = birdMesh.instanceMatrix.needsUpdate = true;
+}
+
+// ===== the tower draws itself from the ground up (a clipping plane that rises) =====
+const clip = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e5);
+renderer.clippingPlanes = [clip];
+let reveal = null;
+
+// ===== title plate: a drawing-sheet cartouche, also stamped onto exports =====
+const ROMAN = n => [[10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']].reduce((o, [v, r]) => { while (n >= v) { o += r; n -= v; } return o; }, '');
+const GROUND_WORD = { plaza: 'on a plaza', sea: 'at sea', dunes: 'in the dunes', meadow: 'in a meadow' };
+function plateText(P) {
+  return [S.daily ? 'Tower of the day · ' + DAILY_LABEL.slice(7) : 'Plate ' + (100 + hash(P.seed) % 900),
+    towerName(P.seed), `${ROMAN(P.n)} storeys · ${P.ramp.turns.toFixed(1)} turns · ${Math.round(P.top * 3.5)} m · ${GROUND_WORD[P.ground.kind]}`];
+}
+function drawPlate(x, k, ink) {
+  const [kick, name, meta] = plateText(S.plan), F = '"Space Mono", ui-monospace, monospace', pad = 11 * k, X = 16 * k, Y = 16 * k;
+  x.font = `${9.5 * k}px ${F}`; const w1 = x.measureText(kick.toUpperCase()).width;
+  x.font = `700 ${14 * k}px ${F}`; const w2 = x.measureText(name).width;
+  x.font = `${10.5 * k}px ${F}`; const w3 = x.measureText(meta).width;
+  const W = Math.max(w1, w2, w3) + pad * 2, H = 58 * k;
+  x.save(); x.strokeStyle = ink; x.globalAlpha = 0.45; x.lineWidth = k; x.strokeRect(X + k / 2, Y + k / 2, W, H); x.restore();
+  x.fillStyle = ink; x.textBaseline = 'top';
+  x.globalAlpha = 0.7; x.font = `${9.5 * k}px ${F}`; x.fillText(kick.toUpperCase(), X + pad, Y + 9 * k);
+  x.globalAlpha = 1; x.font = `700 ${14 * k}px ${F}`; x.fillText(name, X + pad, Y + 22 * k);
+  x.globalAlpha = 0.8; x.font = `${10.5 * k}px ${F}`; x.fillText(meta, X + pad, Y + 41 * k); x.globalAlpha = 1;
+}
+
+function build(animate = false) {
   const t0 = performance.now();
   disposeTower(); buckets = {}; edges = { s: [], d: [] };
   const P = S.plan = generate(S.seed, S.n, S.chaos);
@@ -522,6 +597,9 @@ function build() {
     const lg = new LineSegmentsGeometry(); lg.setPositions(arr);
     const ls = new LineSegments2(lg, lineMat[k]); ls.userData.line = k; tower.add(ls);
   }
+  makeLife(P); updateLife(0);
+  const [k, n, m] = plateText(P); $('pk').textContent = k; $('pn').textContent = n; $('pm').textContent = m;
+  reveal = animate && !still ? { t0: -1, f: 0, top: P.top + 4 } : null; clip.constant = reveal ? -1.4 : 1e5;
   frame(P); applyStyle(); syncUI(); writeURL();
   window.__babel = { plan: P, ms: performance.now() - t0, meshes: tower.children.length };
 }
@@ -548,6 +626,8 @@ function applyStyle() {
     o.material = mats[o.userData.role];
     if (!L && o.geometry.userData.tone) colorize(o.geometry, st.ramp);
   }
+  lifeMat.color.set({ sketch: '#3a3632', clay: '#5e3324', blueprint: '#f4f8ff', dusk: '#140f19', linework: INK }[S.style]);
+  lampMesh.visible = S.style === 'dusk';
   if (st.edge) { lineMat.s.color.set(st.edge); lineMat.d.color.set(st.edge); }
   S.lineBase = st.ew || 1.5; setLineWidths(renderer.getPixelRatio());
   renderer.shadowMap.enabled = !L && st.shadow; sun.castShadow = !L && st.shadow;
@@ -589,10 +669,19 @@ let resumeT = 0;
 controls.addEventListener('start', () => { controls.autoRotate = false; clearTimeout(resumeT); });
 controls.addEventListener('end', () => { clearTimeout(resumeT); resumeT = setTimeout(() => { controls.autoRotate = S.rotate; }, 4000); });
 controls.addEventListener('change', () => { dirty = true; });
+let tick = 0;
 renderer.setAnimationLoop(() => {
-  const moved = controls.update();
-  if (controls.autoRotate && mats.g && S.plan.ground.kind === 'sea') mats.g.map.offset.set((performance.now() * 0.00002) % 1, 0);
-  if (moved || dirty || controls.autoRotate) { renderer.render(scene, camera); dirty = false; }
+  const now = performance.now(), moved = controls.update();
+  if (controls.autoRotate && mats.g && S.plan.ground.kind === 'sea') mats.g.map.offset.set((now * 0.00002) % 1, 0);
+  if (reveal) {
+    if (reveal.t0 < 0 && ++reveal.f > 2) reveal.t0 = now;   // start the clock after shaders have compiled
+    const k = reveal.t0 < 0 ? 0 : Math.min(1, (now - reveal.t0) / 1900), e = 1 - Math.pow(1 - k, 3);
+    clip.constant = k < 1 ? -1.4 + e * (reveal.top + 1.4) : 1e5; if (k >= 1) reveal = null; dirty = true;
+  }
+  const alive = !still && document.visibilityState === 'visible';
+  if (alive) updateLife(now / 1000);
+  // walkers alone are drawn at half rate, so an idle tower stays cheap on a phone
+  if (moved || dirty || controls.autoRotate || (alive && (tick++ & 1))) { renderer.render(scene, camera); dirty = false; }
 });
 
 // ===== export =====
@@ -603,12 +692,14 @@ async function exportPNG() {
   const prev = renderer.getPixelRatio();
   renderer.setPixelRatio(scale); renderer.setSize(w, h, false);
   const db = renderer.getDrawingBufferSize(new THREE.Vector2()); lineMat.s.resolution.copy(db); lineMat.d.resolution.copy(db); setLineWidths(scale);
+  reveal = null; clip.constant = 1e5;
   renderer.render(scene, camera);
   const out = canvas2d(db.x, db.y), x = out.getContext('2d');
   x.fillStyle = L ? '#ffffff' : STYLES[S.style].bg; x.fillRect(0, 0, out.width, out.height);
   if (S.style === 'sketch') x.filter = EMBOSS(scale);
   x.drawImage(renderer.domElement, 0, 0); x.filter = 'none';
   if (S.style === 'sketch') { x.globalCompositeOperation = 'multiply'; x.globalAlpha = 0.38; x.fillStyle = x.createPattern(grainCanvas, 'repeat'); x.fillRect(0, 0, out.width, out.height); x.globalAlpha = 1; x.globalCompositeOperation = 'source-over'; }
+  drawPlate(x, scale, L ? INK : STYLES[S.style].ui);
   renderer.setPixelRatio(prev); resize(); setLineWidths(prev);
   const blob = await new Promise(r => out.toBlob(r, 'image/png'));
   const filename = `babelstack-${S.seed}${L ? '-linework' : ''}.png`;
@@ -633,10 +724,12 @@ function syncUI() {
   for (const b of $('styles').children) b.setAttribute('aria-pressed', String(b.dataset.style === S.style));
   $('rot').setAttribute('aria-pressed', String(S.rotate));
 }
-function setSeed(seed, daily = false) {
+const hist = [];
+function setSeed(seed, daily = false, back = false) {
+  if (!back && seed !== S.seed) { hist.push([S.seed, S.daily]); if (hist.length > 50) hist.shift(); }
   S.seed = seed; S.daily = daily;
   const d = seedDefaults(seed); if (!S.hUser) S.n = d.n; if (!S.cUser) S.chaos = d.chaos;
-  build();
+  build(true);
 }
 function setRotate(on) { S.rotate = on; controls.autoRotate = on; syncUI(); }
 $('new').onclick = () => setSeed(newSeed());
@@ -660,15 +753,16 @@ $('styles').addEventListener('click', e => {
 $('rot').onclick = () => { setRotate(!S.rotate); S.rotatePref = S.rotate; };
 $('png').onclick = exportPNG;
 addEventListener('keydown', e => {
-  if (e.code !== 'Space' || e.target === seedEl || e.repeat) return;
-  e.preventDefault(); setSeed(newSeed());
+  if (e.target === seedEl || e.repeat) return;
+  if (e.code === 'Space') { e.preventDefault(); setSeed(newSeed()); }
+  if (e.key === 'ArrowLeft' && hist.length) { const [sd, dl] = hist.pop(); setSeed(sd, dl, true); }
 });
 
 // ===== boot =====
 try { document.fonts.load('700 22px "Space Mono"').then(() => { for (const k in GTEX) { GTEX[k].dispose(); delete GTEX[k]; } if (S.plan) applyStyle(); }); } catch {}
 { const d = seedDefaults(S.seed); if (!S.hUser) S.n = d.n; if (!S.cUser) S.chaos = d.chaos; }
 controls.autoRotate = S.rotate;
-build();
+build(true);
 </script>
 
 </body></html>
