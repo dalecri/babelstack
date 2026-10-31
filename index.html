@@ -38,12 +38,18 @@ button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:v
 #plate b{font-size:14px;line-height:1.25;text-wrap:balance}
 #plate span{font-size:10.5px;opacity:.8;font-variant-numeric:tabular-nums}
 @media (max-width:520px){ #plate{padding:6px 8px;max-width:52vw} #plate b{font-size:12px} #plate span{font-size:9.5px} }
+#paper{position:absolute;inset:0;pointer-events:none}
+#note{position:absolute;z-index:3;max-width:min(300px,78vw);display:grid;gap:3px;padding:9px 12px 10px;background:var(--bg);border:1px solid var(--ink);box-shadow:4px 4px 0 color-mix(in srgb,var(--ink) 18%,transparent);pointer-events:none}
+#note[hidden]{display:none}
+#note small{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;opacity:.7}
+#note b{font-size:13px;line-height:1.3;text-wrap:balance}
+#note span{font-size:10.5px;opacity:.8}
 #err{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px}
 @media (max-width:520px){ .sl input{width:70px} #bar{gap:8px 12px} .seg button{padding:6px 7px} }
 @media (prefers-reduced-motion:reduce){ body{transition:none} }
 </style>
 
-<div id="stage"><div id="grain"></div><div id="plate"><small id="pk"></small><b id="pn"></b><span id="pm"></span></div></div>
+<div id="stage"><div id="grain"></div><div id="note" hidden><small id="nk"></small><b id="nn"></b><span id="nm"></span></div><div id="plate"><small id="pk"></small><b id="pn"></b><span id="pm"></span></div></div>
 <div id="bar">
   <div class="grp"><input id="seed" type="text" spellcheck="false" autocomplete="off" aria-label="Seed"><button id="copy">copy link</button></div>
   <button id="new">new tower</button>
@@ -146,7 +152,7 @@ const pad = v => String(v).padStart(2, '0');
 const now = new Date();
 const DAILY = `daily-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 const DAILY_LABEL = 'daily, ' + now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-const clean = s => String(s || '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40);
+const clean = s => String(s || '').toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').slice(0, 40);
 const S = { seed: DAILY, daily: true, n: 12, chaos: 0.5, hUser: false, cUser: false, style: 'sketch', rotate: true, rotatePref: true, plan: null };
 (function readURL() {
   const q = new URLSearchParams(location.search);
@@ -292,6 +298,27 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setClearColor(0x000000, 0);
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 stage.prepend(renderer.domElement);
+const paper = document.createElement('div'); paper.id = 'paper'; stage.prepend(paper);
+const starCanvas = (() => {
+  const sz = 360, c = canvas2d(sz, sz), x = c.getContext('2d'), r = mulberry32(4242);
+  x.font = '14px "Space Mono", ui-monospace, monospace'; x.textAlign = 'center';
+  for (let i = 0; i < 70; i++) { const g = r(); x.fillStyle = `rgba(234,220,242,${(0.15 + r() * 0.45).toFixed(2)})`; x.fillText(g < 0.6 ? '.' : g < 0.85 ? '+' : g < 0.95 ? '\u00b7' : '*', r() * sz, r() * sz); }
+  return c;
+})();
+const GRID_LINE = 'rgba(232,240,255,.07)', GRID_MAJOR = 'rgba(232,240,255,.13)';
+const PAPER = {
+  blueprint: `linear-gradient(${GRID_MAJOR} 1px,transparent 1px) 0 0/120px 120px,linear-gradient(90deg,${GRID_MAJOR} 1px,transparent 1px) 0 0/120px 120px,linear-gradient(${GRID_LINE} 1px,transparent 1px) 0 0/24px 24px,linear-gradient(90deg,${GRID_LINE} 1px,transparent 1px) 0 0/24px 24px`,
+  dusk: `linear-gradient(transparent 35%,#2a1c2e 85%),url(${starCanvas.toDataURL()}) 0 0/360px 360px`,
+};
+function drawPaper(x, k, w, h) {   // the same paper, drawn into an export
+  if (S.style === 'blueprint') for (const [step, col] of [[24, GRID_LINE], [120, GRID_MAJOR]]) {
+    x.fillStyle = col; for (let p = 0; p < w; p += step * k) x.fillRect(p, 0, k, h); for (let p = 0; p < h; p += step * k) x.fillRect(0, p, w, k);
+  }
+  if (S.style === 'dusk') {
+    const pat = x.createPattern(starCanvas, 'repeat'); pat.setTransform(new DOMMatrix().scale(k)); x.fillStyle = pat; x.fillRect(0, 0, w, h);
+    const g = x.createLinearGradient(0, 0, 0, h); g.addColorStop(0.35, 'rgba(42,28,46,0)'); g.addColorStop(0.85, '#2a1c2e'); x.fillStyle = g; x.fillRect(0, 0, w, h);
+  }
+}
 maxAniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
 const scene = new THREE.Scene();
 const camera = new THREE.OrthographicCamera(-10, 10, 10, -10, -200, 400);
@@ -306,6 +333,7 @@ sun.shadow.mapSize.set(small ? 1024 : 2048, small ? 1024 : 2048);
 sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03; sun.shadow.radius = 3;
 scene.add(hemi, sun, sun.target);
 const tower = new THREE.Group(); scene.add(tower);
+const hlMat = new LineMaterial({ color: 0xb0442a, linewidth: 2.6, depthTest: false, transparent: true });
 const lineMat = { s: new LineMaterial({ color: 0x000000, linewidth: 1.5 }), d: new LineMaterial({ color: 0x000000, linewidth: 0.8 }) };
 
 // ===== geometry helpers: everything is baked to world space, bucketed by material role, merged =====
@@ -521,7 +549,7 @@ function disposeTower() {
 }
 // ===== life: inhabitants who climb forever, birds over the top =====
 let rampPath = [], walkers = [], birds = [];
-const lifeMat = new THREE.MeshBasicMaterial({ color: 0x333333 }), lampMat = new THREE.MeshBasicMaterial({ color: 0xffb25c });
+const lifeMat = new THREE.MeshBasicMaterial({ color: 0x333333, side: THREE.DoubleSide }), lampMat = new THREE.MeshBasicMaterial({ color: 0xffb25c });
 const figGeo = mergeGeometries([new THREE.BoxGeometry(0.15, 0.28, 0.1).translate(0, 0.16, 0), new THREE.BoxGeometry(0.11, 0.11, 0.11).translate(0, 0.37, 0)]);
 const wing = s => new THREE.BoxGeometry(0.34, 0.02, 0.09).translate(s * 0.17, 0, 0).rotateZ(s * 0.45);
 const MAXW = 12, MAXB = 6;
@@ -532,7 +560,28 @@ function makeLife(P) {
   const r = stream(P.seed, 'life');
   walkers = Array.from({ length: 3 + Math.floor(r() * 7) }, () => ({ s: r(), v: (0.006 + r() * 0.008) * (r() < 0.3 ? -1 : 1), lat: (r() - 0.5) * 0.42, ph: r() * 6.28 }));
   birds = Array.from({ length: Math.floor(r() * (2 + 4 * P.chaos)) }, () => ({ a: r() * 6.28, rad: 3.5 + r() * 4, y: P.top + 1 + r() * 3, w: (0.22 + r() * 0.2) * (r() < 0.5 ? -1 : 1), ph: r() * 6.28 }));
+  if (P.chaos > 0.45 && r() < 0.75) walkers[walkers.length - 1].inv = true;   // walks the underside; nobody has told them
+  walkers.forEach(w => { w.laps = 100 + Math.floor(r() * 9000); });
   walkMesh.count = lampMesh.count = walkers.length; birdMesh.count = birds.length;
+  makeClouds(P);
+}
+// Low-poly clouds that drift through the stack and cast shadows across it.
+let clouds = [];
+const cloudLit = new THREE.MeshLambertMaterial({ color: 0xffffff, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+const cloudFlat = new THREE.MeshBasicMaterial({ color: 0xffffff, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+function makeClouds(P) {
+  for (const c of clouds) { c.g.traverse(o => o.geometry && o.geometry.dispose()); scene.remove(c.g); }
+  const r = stream(P.seed, 'clouds'), n = Math.min(4, Math.floor(r() * (1 + 3.4 * P.chaos)));
+  clouds = Array.from({ length: n }, () => {
+    const L = 3 + r() * 3, D = 1.5 + r() * 1, parts = [boxGeo(L, 0.55, D)];   // stacked iso "pixel cloud"
+    parts.push(boxGeo(L * (0.45 + r() * 0.25), 0.5, D * 0.75).translate((r() - 0.5) * L * 0.3, 0.52, (r() - 0.5) * 0.2));
+    if (r() < 0.6) parts.push(boxGeo(L * 0.28, 0.45, D * 0.5).translate((r() - 0.5) * L * 0.2, 0.98, 0));
+    const geo = mergeGeometries(parts); parts.forEach(q => q.dispose());
+    const g = new THREE.Group(), m = new THREE.Mesh(geo, cloudLit); m.castShadow = true; g.add(m);
+    const lg = new LineSegmentsGeometry(); const eg = new THREE.EdgesGeometry(geo, 20); lg.setPositions(eg.attributes.position.array); eg.dispose();
+    const ls = new LineSegments2(lg, lineMat.d); ls.userData.line = 'd'; g.add(ls); scene.add(g);
+    return { g, m, ls, a: r() * 6.28, rad: 4.5 + r() * 4.5, y: P.top * (0.35 + r() * 0.5), w: (0.025 + r() * 0.03) * (r() < 0.5 ? -1 : 1), ph: r() * 6.28 };
+  });
 }
 const dummy = new THREE.Object3D(), still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 function updateLife(t) {
@@ -542,7 +591,8 @@ function updateLife(t) {
     dummy.position.lerpVectors(a.p, b.p, f - i0).addScaledVector(a.n, w.lat);
     dummy.position.y += Math.abs(Math.sin(t * 7 + w.ph)) * 0.035;
     const dx = (b.p.x - a.p.x) * Math.sign(w.v), dz = (b.p.z - a.p.z) * Math.sign(w.v);
-    dummy.rotation.set(0, Math.atan2(dx, dz), 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix();
+    if (w.inv) dummy.position.y -= 0.15;
+    dummy.rotation.set(0, Math.atan2(dx, dz), 0); dummy.scale.set(1, w.inv ? -1 : 1, 1); dummy.updateMatrix();
     walkMesh.setMatrixAt(i, dummy.matrix); lampMesh.setMatrixAt(i, dummy.matrix);
   });
   birds.forEach((b, i) => {
@@ -551,6 +601,7 @@ function updateLife(t) {
     dummy.rotation.set(0, -a + (b.w > 0 ? 0 : Math.PI), 0); dummy.scale.set(1, 0.25 + Math.abs(Math.sin(t * 5 + b.ph)) * 1.4, 1); dummy.updateMatrix();
     birdMesh.setMatrixAt(i, dummy.matrix);
   });
+  for (const c of clouds) { const a = c.a + c.w * t; c.g.position.set(Math.cos(a) * c.rad, c.y + Math.sin(t * 0.3 + c.ph) * 0.25, Math.sin(a) * c.rad); c.g.rotation.y = -a; }
   walkMesh.instanceMatrix.needsUpdate = lampMesh.instanceMatrix.needsUpdate = birdMesh.instanceMatrix.needsUpdate = true;
 }
 
@@ -597,7 +648,7 @@ function build(animate = false) {
     const lg = new LineSegmentsGeometry(); lg.setPositions(arr);
     const ls = new LineSegments2(lg, lineMat[k]); ls.userData.line = k; tower.add(ls);
   }
-  makeLife(P); updateLife(0);
+  makeLife(P); updateLife(0); hideNote();
   const [k, n, m] = plateText(P); $('pk').textContent = k; $('pn').textContent = n; $('pm').textContent = m;
   reveal = animate && !still ? { t0: -1, f: 0, top: P.top + 4 } : null; clip.constant = reveal ? -1.4 : 1e5;
   frame(P); applyStyle(); syncUI(); writeURL();
@@ -628,6 +679,10 @@ function applyStyle() {
   }
   lifeMat.color.set({ sketch: '#3a3632', clay: '#5e3324', blueprint: '#f4f8ff', dusk: '#140f19', linework: INK }[S.style]);
   lampMesh.visible = S.style === 'dusk';
+  cloudLit.color.set({ sketch: '#f6f4ef', clay: '#f1dccb', blueprint: '#4a71b4', dusk: '#4d4260' }[S.style] || '#ffffff');
+  for (const c of clouds) { c.m.material = L ? cloudFlat : cloudLit; c.ls.visible = !!st.edge; }
+  paper.style.background = PAPER[S.style] || 'none';
+  hlMat.color.set({ sketch: '#b0442a', clay: '#3a2318', blueprint: '#ffd75a', dusk: '#ffb25c' }[S.style] || '#d9442a'); hideNote();
   if (st.edge) { lineMat.s.color.set(st.edge); lineMat.d.color.set(st.edge); }
   S.lineBase = st.ew || 1.5; setLineWidths(renderer.getPixelRatio());
   renderer.shadowMap.enabled = !L && st.shadow; sun.castShadow = !L && st.shadow;
@@ -641,7 +696,7 @@ function applyStyle() {
 }
 // "Realistic emboss": a light rim on the lit side and a soft dark rim on the far side press the drawing into the paper.
 const EMBOSS = k => `drop-shadow(${-0.8 * k}px ${-0.8 * k}px 0 rgba(255,255,255,.75)) drop-shadow(${0.9 * k}px ${1.1 * k}px ${0.6 * k}px rgba(70,60,45,.22))`;
-function setLineWidths(pr) { lineMat.s.linewidth = S.lineBase * pr; lineMat.d.linewidth = S.lineBase * 0.5 * pr; }
+function setLineWidths(pr) { lineMat.s.linewidth = S.lineBase * pr; lineMat.d.linewidth = S.lineBase * 0.5 * pr; hlMat.linewidth = 2.6 * pr; }
 
 // ===== camera framing, resize, loop =====
 let dirty = true;
@@ -661,7 +716,7 @@ function resize() {
   renderer.setSize(w, h, false);
   let v = S.view || 30; if (a < 0.9) v = Math.max(v, (S.plan ? S.plan.plinth : 14) * 1.5 / a);
   Object.assign(camera, { left: -v * a / 2, right: v * a / 2, top: v / 2, bottom: -v / 2 }); camera.updateProjectionMatrix();
-  const db = renderer.getDrawingBufferSize(new THREE.Vector2()); lineMat.s.resolution.copy(db); lineMat.d.resolution.copy(db);
+  const db = renderer.getDrawingBufferSize(new THREE.Vector2()); for (const m of [lineMat.s, lineMat.d, hlMat]) m.resolution.copy(db);
   dirty = true;
 }
 new ResizeObserver(resize).observe(stage);
@@ -684,6 +739,58 @@ renderer.setAnimationLoop(() => {
   if (moved || dirty || controls.autoRotate || (alive && (tick++ & 1))) { renderer.render(scene, camera); dirty = false; }
 });
 
+// ===== tap a storey: what is kept there =====
+const ROOMS = ['Reading room', 'Archive', 'Workshop', 'Dormitory', 'Orchard', 'Observatory', 'Chapel', 'Waiting room', 'Kitchen', 'Map room', 'Aviary', 'Clock room', 'Customs office', 'Bathhouse', 'Lost property office', 'Ballroom'];
+const THINGS = ['unsent letters', 'misplaced umbrellas', 'borrowed weather', 'second drafts', 'every staircase ever drawn', 'quiet hours', 'left gloves', 'unfinished maps', 'the sound of rain', 'returned keys', 'forgotten names', 'spare moons', "yesterday's newspapers", 'paper boats', 'lanterns never lit', 'books with one wrong letter'];
+const TYPE_NOTE = { bridge: 'a bridge to nowhere', drum: 'a rotunda', arch: 'a gateway', ruin: 'abandoned, mostly', float: 'hovering, rent free', stair: 'entrance on the outside', box: '' };
+let hl = null, noteT = 0;
+const note = $('note'), ray = new THREE.Raycaster();
+function hideNote() { note.hidden = true; clearTimeout(noteT); if (hl) { hl.geometry.dispose(); scene.remove(hl); hl = null; dirty = true; } }
+function showNote(px, py, kick, name, meta, box) {
+  hideNote();
+  $('nk').textContent = kick; $('nn').textContent = name; $('nm').textContent = meta; note.hidden = false;
+  const W = stage.clientWidth, H = stage.clientHeight, nw = note.offsetWidth, nh = note.offsetHeight;
+  note.style.left = clamp(px + 16, 8, W - nw - 8) + 'px'; note.style.top = clamp(py - nh - 12, 8, H - nh - 8) + 'px';
+  if (box) { const eg = new THREE.EdgesGeometry(box.g), lg = new LineSegmentsGeometry(); lg.setPositions(eg.attributes.position.array); eg.dispose(); box.g.dispose(); hl = new LineSegments2(lg, hlMat); hl.applyMatrix4(box.M); hl.renderOrder = 10; scene.add(hl); }
+  noteT = setTimeout(hideNote, 7000); dirty = true;
+}
+function blockAt(p) {
+  let hit = null;
+  for (const b of S.plan.blocks) {
+    const a = b.rot * Math.PI / 2, dx = p.x - b.x, dz = p.z - b.z, lx = dx * Math.cos(a) - dz * Math.sin(a), lz = dx * Math.sin(a) + dz * Math.cos(a);
+    if (Math.abs(lx) <= b.w / 2 + 0.15 && Math.abs(lz) <= b.d / 2 + (b.type === 'stair' ? 1.3 : 0.15) && p.y >= b.y - (b.gap || 0) - 0.1 && p.y <= b.y + b.h + 0.12) hit = b;
+  }
+  return hit;
+}
+function pick(e) {
+  const rc = renderer.domElement.getBoundingClientRect(), px = e.clientX - rc.left, py = e.clientY - rc.top, P = S.plan;
+  ray.setFromCamera(new THREE.Vector2(px / rc.width * 2 - 1, -(py / rc.height) * 2 + 1), camera);
+  walkMesh.boundingSphere = null;
+  const hit = ray.intersectObjects([...tower.children.filter(o => o.userData.role), walkMesh], false)[0];
+  if (!hit) return hideNote();
+  if (hit.object === walkMesh) {
+    const w = walkers[hit.instanceId], laps = w.laps + Math.floor(Math.abs(w.v) * performance.now() / 1000);
+    return showNote(px, py, 'Resident no. ' + (hit.instanceId + 1), w.inv ? 'Walks the underside. Nobody has told them.' : w.v > 0 ? 'Climbing to the top terrace' : 'Walking back down, for now', `lap ${laps.toLocaleString('en-US')} · has not yet arrived`);
+  }
+  const b = blockAt(hit.point);
+  if (b) {
+    const r = stream(P.seed, 'room' + b.i), room = ROOMS[Math.floor(r() * ROOMS.length)], thing = THINGS[Math.floor(r() * THINGS.length)];
+    const fl = b.type === 'bridge' ? 'slab' : b.h === 1 ? '1 floor' : b.h + ' floors', extra = TYPE_NOTE[b.type];
+    const M = blockM(b), gap = b.gap || 0, ext = b.type === 'stair' ? 1.2 : 0;
+    return showNote(px, py, `Storey ${ROMAN(b.i + 1)} of ${ROMAN(P.n)}`, `${room} for ${thing}`, `${b.facade} facade · ${fl}${extra ? ' · ' + extra : ''}`,
+      { g: new THREE.BoxGeometry(b.w + 0.12, b.h + gap + 0.12, b.d + 0.12 + ext).translate(0, (b.h - gap) / 2, ext / 2), M });
+  }
+  if (hit.point.y > 0.62) return showNote(px, py, 'The ramp', `${P.ramp.turns.toFixed(1)} turns, ground to terrace`, 'arrives at a door one step too high');
+  const n = P.ground.kind;
+  showNote(px, py, 'The ground', { plaza: 'A plaza. The roads lead off the page.', sea: 'The sea. Rocks, piers, no boats.', dunes: 'The dunes. The wind is rearranging them.', meadow: 'A meadow. The trees keep to themselves.' }[n], GROUND_WORD[n]);
+}
+let downAt = null;
+renderer.domElement.addEventListener('pointerdown', e => { downAt = [e.clientX, e.clientY, performance.now()]; hideNote(); });
+renderer.domElement.addEventListener('pointerup', e => {
+  if (!downAt) return; const [x, y, t] = downAt; downAt = null;
+  if (Math.hypot(e.clientX - x, e.clientY - y) < 6 && performance.now() - t < 450 && S.plan) pick(e);
+});
+
 // ===== export =====
 const dlP = (window.claude && claude.use) ? claude.use('downloads').catch(() => null) : Promise.resolve(null);
 async function exportPNG() {
@@ -692,10 +799,10 @@ async function exportPNG() {
   const prev = renderer.getPixelRatio();
   renderer.setPixelRatio(scale); renderer.setSize(w, h, false);
   const db = renderer.getDrawingBufferSize(new THREE.Vector2()); lineMat.s.resolution.copy(db); lineMat.d.resolution.copy(db); setLineWidths(scale);
-  reveal = null; clip.constant = 1e5;
+  reveal = null; clip.constant = 1e5; hideNote();
   renderer.render(scene, camera);
   const out = canvas2d(db.x, db.y), x = out.getContext('2d');
-  x.fillStyle = L ? '#ffffff' : STYLES[S.style].bg; x.fillRect(0, 0, out.width, out.height);
+  x.fillStyle = L ? '#ffffff' : STYLES[S.style].bg; x.fillRect(0, 0, out.width, out.height); drawPaper(x, scale, out.width, out.height);
   if (S.style === 'sketch') x.filter = EMBOSS(scale);
   x.drawImage(renderer.domElement, 0, 0); x.filter = 'none';
   if (S.style === 'sketch') { x.globalCompositeOperation = 'multiply'; x.globalAlpha = 0.38; x.fillStyle = x.createPattern(grainCanvas, 'repeat'); x.fillRect(0, 0, out.width, out.height); x.globalAlpha = 1; x.globalCompositeOperation = 'source-over'; }
@@ -755,6 +862,7 @@ $('png').onclick = exportPNG;
 addEventListener('keydown', e => {
   if (e.target === seedEl || e.repeat) return;
   if (e.code === 'Space') { e.preventDefault(); setSeed(newSeed()); }
+  if (e.key === 'Escape') hideNote();
   if (e.key === 'ArrowLeft' && hist.length) { const [sd, dl] = hist.pop(); setSeed(sd, dl, true); }
 });
 
