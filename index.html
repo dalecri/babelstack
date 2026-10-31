@@ -119,7 +119,9 @@ function generate(seed, n, chaos) {
   const rd = stream(seed, 'roads'), sides = [0, 1, 2, 3];
   for (let i = 3; i > 0; i--) { const j = Math.floor(rd() * (i + 1)); [sides[i], sides[j]] = [sides[j], sides[i]]; }
   const roads = sides.slice(0, rd() < 0.5 ? 2 : 3).map(s => ({ side: s, off: +(rd() - 0.5).toFixed(3), len: +(16 + rd() * 10).toFixed(2) }));
-  return { seed, n, chaos: c, blocks, ramp, ramp2, roads, top: +top.toFixed(3) };
+  const gr = stream(seed, 'ground'), gk = gr();
+  const ground = { kind: gk < 0.28 ? 'plaza' : gk < 0.58 ? 'sea' : gk < 0.79 ? 'dunes' : 'meadow', rnd: Array.from({ length: 90 }, () => +gr().toFixed(4)) };
+  return { seed, n, chaos: c, blocks, ramp, ramp2, roads, ground, top: +top.toFixed(3) };
 }
 // </gen>
 
@@ -149,10 +151,10 @@ function newSeed() { const a = new Uint32Array(2); crypto.getRandomValues(a); re
 // ===== styles =====
 const INK = '#1c1a17';
 const STYLES = {
-  sketch:    { bg: '#ebe7de', ui: '#2a2724', ramp: ['#8f8b84', '#a8a49c', '#c2beb6', '#d9d6cf', '#efede8'], edge: '#2a2724', ew: 1.5, door: '#4f4b45', hemi: ['#ffffff', '#b7b2a8'], dir: '#ffffff', shadow: true },
-  clay:      { bg: '#e8d8c9', ui: '#4a2c20', ramp: ['#a35f45', '#b77256', '#c98a6b', '#d9a283', '#e8bb9c'], edge: null, door: '#6e3a28', hemi: ['#fff3e8', '#9a6a55'], dir: '#fff0e0', shadow: true },
-  blueprint: { bg: '#14305f', ui: '#e8f0ff', ramp: ['#6e8ec2', '#87a3d0', '#a1b9de', '#bccfea', '#d9e5f6'], edge: '#f4f8ff', ew: 1.2, door: '#2f5490', hemi: ['#ffffff', '#4a6aa0'], dir: '#ffffff', shadow: true },
-  dusk:      { bg: '#2a1c2e', ui: '#eadcf2', ramp: ['#3a3245', '#4b4257', '#5d546a', '#71687e', '#867d93'], edge: null, door: '#1c1520', hemi: ['#b9a6d8', '#2f2236'], dir: '#ffd2b0', shadow: true, lit: '#ffb25c' },
+  sketch:    { gnd: { sea: ['#c4cccd', '#5f6b6e'], dunes: ['#e2dac8', '#8a7f6a'], meadow: ['#d3d4c0', '#646a52'] }, bg: '#ebe7de', ui: '#2a2724', ramp: ['#8f8b84', '#a8a49c', '#c2beb6', '#d9d6cf', '#efede8'], edge: '#2a2724', ew: 1.5, door: '#4f4b45', hemi: ['#ffffff', '#b7b2a8'], dir: '#ffffff', shadow: true },
+  clay:      { gnd: { sea: ['#bfa596', '#7f5e4e'], dunes: ['#e6c4a6', '#a5744f'], meadow: ['#d4b090', '#8c6142'] }, bg: '#e8d8c9', ui: '#4a2c20', ramp: ['#a35f45', '#b77256', '#c98a6b', '#d9a283', '#e8bb9c'], edge: null, door: '#6e3a28', hemi: ['#fff3e8', '#9a6a55'], dir: '#fff0e0', shadow: true },
+  blueprint: { gnd: { sea: ['#163566', '#8fb0e6'], dunes: ['#1f4079', '#b4c9ee'], meadow: ['#1b3b72', '#a2bdea'] }, bg: '#14305f', ui: '#e8f0ff', ramp: ['#6e8ec2', '#87a3d0', '#a1b9de', '#bccfea', '#d9e5f6'], edge: '#f4f8ff', ew: 1.2, door: '#2f5490', hemi: ['#ffffff', '#4a6aa0'], dir: '#ffffff', shadow: true },
+  dusk:      { gnd: { sea: ['#1f1729', '#8a76a8'], dunes: ['#3a2d40', '#86728c'], meadow: ['#30283a', '#7a6d8c'] }, bg: '#2a1c2e', ui: '#eadcf2', ramp: ['#3a3245', '#4b4257', '#5d546a', '#71687e', '#867d93'], edge: null, door: '#1c1520', hemi: ['#b9a6d8', '#2f2236'], dir: '#ffd2b0', shadow: true, lit: '#ffb25c' },
   linework:  { bg: '#ffffff', ui: INK, edge: INK, ew: 2, flat: true },
 };
 const STYLE_KEYS = Object.keys(STYLES);
@@ -229,6 +231,27 @@ function mkTex(canvas) { const t = new THREE.CanvasTexture(canvas); t.colorSpace
 const TEX = {}; const tex = (f, v) => TEX[f + v] ||= mkTex(v === 'line' ? lineCanvas(f) : shadeCanvas(f));
 let LIT = {}, litSeed = null;
 function litTex(f) { if (litSeed !== S.seed) { Object.values(LIT).forEach(t => t.dispose()); LIT = {}; litSeed = S.seed; } return LIT[f] ||= mkTex(litCanvas(f, S.seed)); }
+
+// ASCII ground: glyph fields drawn in code, one per ground kind and style.
+function groundCanvas(kind, base, glyph) {
+  const sz = 512, cols = 32, rows = 16, cw = sz / cols, chh = sz / rows, c = canvas2d(sz, sz), x = c.getContext('2d'), r = mulberry32(hash('ascii-' + kind)), TAU = Math.PI * 2;
+  x.fillStyle = base; x.fillRect(0, 0, sz, sz); x.fillStyle = glyph;
+  x.font = '700 26px "Space Mono", ui-monospace, monospace'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
+    const q = r(); let g = ' ';
+    if (kind === 'sea') { const v = Math.sin(TAU * (col / cols * 4 + row / rows * 2)); g = v > 0.35 ? (q < 0.85 ? '~' : '-') : q < 0.05 ? '.' : ' '; }
+    if (kind === 'dunes') { const v = Math.sin(TAU * (col / cols * 2 + row / rows) + 1.4 * Math.sin(TAU * row / rows * 2)); g = v > 0.8 ? '~' : v > 0.5 ? (q < 0.6 ? '.' : ' ') : q < 0.05 ? ':' : ' '; }
+    if (kind === 'meadow') g = q < 0.16 ? '"' : q < 0.26 ? ',' : q < 0.32 ? "'" : q < 0.345 ? '*' : ' ';
+    if (g !== ' ') x.fillText(g, col * cw + cw / 2, row * chh + chh / 2);
+  }
+  return c;
+}
+const GTEX = {};
+function gtex(kind, style) {
+  const k = kind + style;
+  if (!GTEX[k]) { const c = (STYLES[style].gnd || {})[kind] || ['#ffffff', INK]; GTEX[k] = mkTex(groundCanvas(kind, c[0], c[1])); GTEX[k].repeat.set(0.065, 0.065); }
+  return GTEX[k];
+}
 
 // Paper grain with embossed relief (light from top-left, shadow bottom-right), generated once.
 const grainCanvas = (() => {
@@ -419,14 +442,46 @@ function buildRamps(P) {
   door(top, Nv, ys + q.flights * 1.05 + 0.5);
 }
 
+const scaleUV = (g, su, sv) => { const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv); return g; };
 function buildGround(P) {
   const e = radiusProfile(P)(0.6), S0 = Math.ceil(2 * (Math.max(Math.abs(e[0]) + e[2], Math.abs(e[1]) + e[3]) + P.ramp.margin + RW + 1.2));
   P.plinth = Math.max(12, S0);
   part(boxGeo(P.plinth, 0.6, P.plinth).translate(0, 0.3, 0), 'plain', 's');
+  const G = P.ground, kind = G.kind, h = P.plinth / 2, M = 6.5, S2 = P.plinth + 2 * M, top = kind === 'sea' ? 0.18 : 0;
+  if (kind !== 'plaza') part(boxGeo(S2, 1.2 + top, S2).translate(0, top - (1.2 + top) / 2, 0), ['plain', 'plain', 'g', 'plain', 'plain', 'plain'], 's');
+  const rw = kind === 'meadow' ? 1.3 : 2.4, lanes = [];
   for (const rd of P.roads) {
-    const nx = [1, 0, -1, 0][rd.side], nz = [0, 1, 0, -1][rd.side], off = rd.off * (P.plinth - 4), h = P.plinth / 2;
-    const cx = nx * (h + rd.len / 2) + (nz ? off : 0), cz = nz * (h + rd.len / 2) + (nx ? off : 0);
-    part(boxGeo(nx ? rd.len : 2.4, 0.14, nz ? rd.len : 2.4).translate(cx, 0.07, cz), 'plain', 's');
+    const nx = [1, 0, -1, 0][rd.side], nz = [0, 1, 0, -1][rd.side], off = rd.off * (P.plinth - 4), len = kind === 'plaza' ? rd.len : M;
+    const along = d => [nx * (h + d) + (nz ? off : 0), nz * (h + d) + (nx ? off : 0)], [cx, cz] = along(len / 2);
+    lanes.push({ nx, nz, off });
+    if (kind === 'sea') {   // roads become piers on pilings
+      part(boxGeo(nx ? len : rw, 0.15, nz ? len : rw).translate(cx, 0.525, cz), 'plain', 's');
+      for (let d = 1; d < len; d += 1.6) for (const sd of [-1, 1]) {
+        const [px, pz] = along(d), lat = sd * (rw / 2 - 0.2);
+        part(boxGeo(0.14, 0.3, 0.14).translate(px + (nz ? lat : 0), 0.3, pz + (nx ? lat : 0)), 'plain', 's');
+      }
+    } else part(boxGeo(nx ? len : rw, 0.14, nz ? len : rw).translate(cx, top + 0.07, cz), 'plain', 's');
+  }
+  if (kind === 'plaza') return;
+  const R = G.rnd, nxt = (k => () => R[k++ % R.length])(0), want = { sea: 4, dunes: 5, meadow: 9 }[kind] + Math.floor(nxt() * 3), placed = [];
+  const onLane = (x, z) => lanes.some(l => l.nx ? Math.sign(x) === l.nx && Math.abs(z - l.off) < rw / 2 + 0.9 : Math.sign(z) === l.nz && Math.abs(x - l.off) < rw / 2 + 0.9);
+  for (let t = 0; t < 28 && placed.length < want; t++) {
+    const x = (nxt() - 0.5) * (S2 - 2), z = (nxt() - 0.5) * (S2 - 2), k = nxt();
+    if (Math.max(Math.abs(x), Math.abs(z)) < h + 1.1 || onLane(x, z) || placed.some(p => Math.hypot(p[0] - x, p[1] - z) < 2.2)) continue;
+    placed.push([x, z, k]);
+  }
+  for (const [x, z, k] of placed) {
+    if (kind === 'sea') { const r = 0.35 + 0.5 * k, hh = 0.3 + 0.5 * k; part(new THREE.CylinderGeometry(r * 0.55, r, hh, 5).translate(x, top + hh / 2 - 0.08, z), 'plain', 's'); }
+    if (kind === 'dunes') {   // asymmetric ridge: gentle windward slope, steep slip face
+      const r = 0.9 + 0.9 * k, hh = 0.4 + 0.6 * k, len = 2 + 2.5 * k, sh = new THREE.Shape();
+      sh.moveTo(-r, 0); sh.lineTo(r, 0); sh.lineTo(r * 0.45, hh); sh.closePath();
+      part(new THREE.ExtrudeGeometry(sh, { depth: len, bevelEnabled: false }).translate(0, 0, -len / 2), 'g', 's', new THREE.Matrix4().makeRotationY(k * 7 % Math.PI).setPosition(x, 0, z));
+    }
+    if (kind === 'meadow') {
+      const th = 0.45 + 0.3 * k, r = 0.45 + 0.35 * k, ch = 1.1 + 1.1 * k;
+      part(boxGeo(0.16, th, 0.16).translate(x, th / 2, z), 'plain', 's');
+      part(scaleUV(new THREE.ConeGeometry(r, ch, 6), 6 * r, ch).translate(x, th + ch / 2, z), ['g', 'g', 'g'], 's');
+    }
   }
 }
 
@@ -457,7 +512,7 @@ function build() {
   buildRamps(P); buildGround(P);
   for (const role in buckets) {
     const g = mergeGeometries(buckets[role]); buckets[role].forEach(x => x.dispose());
-    if (role !== 'door') toneGeo(g, P.top);
+    if (role !== 'door' && role !== 'g') toneGeo(g, P.top);
     const m = new THREE.Mesh(g); m.userData.role = role; m.castShadow = m.receiveShadow = true; tower.add(m);
   }
   for (const k of ['s', 'd']) {
@@ -485,6 +540,7 @@ function applyStyle() {
     if (st.lit) { m.emissive = new THREE.Color(st.lit); m.emissiveMap = litTex(f); }
     mats['f' + i] = m;
   });
+  if (S.plan && S.plan.ground.kind !== 'plaza') { const t = gtex(S.plan.ground.kind, S.style); mats.g = L ? new THREE.MeshBasicMaterial({ map: t, ...off }) : new THREE.MeshLambertMaterial({ map: t, ...off }); }
   mats.plain = L ? new THREE.MeshBasicMaterial({ color: 0xffffff, ...off }) : new THREE.MeshLambertMaterial({ vertexColors: true, ...off });
   mats.door = L ? new THREE.MeshBasicMaterial({ color: 0xffffff, ...off }) : new THREE.MeshLambertMaterial({ color: st.door, ...off });
   for (const o of tower.children) {
@@ -510,7 +566,7 @@ function setLineWidths(pr) { lineMat.s.linewidth = S.lineBase * pr; lineMat.d.li
 // ===== camera framing, resize, loop =====
 let dirty = true;
 function frame(P) {
-  const H = P.top, W = P.plinth;
+  const H = P.top, W = P.plinth + (P.ground.kind === 'plaza' ? 0 : 7);
   S.view = 0.816 * (H + W * 0.62) * 1.08;
   controls.target.set(0, H * 0.47, 0);
   camera.position.copy(controls.target).add(new THREE.Vector3(1, 0.8165, 1).normalize().multiplyScalar(120));
@@ -535,6 +591,7 @@ controls.addEventListener('end', () => { clearTimeout(resumeT); resumeT = setTim
 controls.addEventListener('change', () => { dirty = true; });
 renderer.setAnimationLoop(() => {
   const moved = controls.update();
+  if (controls.autoRotate && mats.g && S.plan.ground.kind === 'sea') mats.g.map.offset.set((performance.now() * 0.00002) % 1, 0);
   if (moved || dirty || controls.autoRotate) { renderer.render(scene, camera); dirty = false; }
 });
 
@@ -608,6 +665,7 @@ addEventListener('keydown', e => {
 });
 
 // ===== boot =====
+try { document.fonts.load('700 22px "Space Mono"').then(() => { for (const k in GTEX) { GTEX[k].dispose(); delete GTEX[k]; } if (S.plan) applyStyle(); }); } catch {}
 { const d = seedDefaults(S.seed); if (!S.hUser) S.n = d.n; if (!S.cUser) S.chaos = d.chaos; }
 controls.autoRotate = S.rotate;
 build();
