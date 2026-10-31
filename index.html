@@ -60,6 +60,7 @@ button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:v
   <label class="sl" for="c">chaos<input id="c" type="range" min="0" max="100" step="1"><output id="cv"></output></label>
   <div class="seg" id="styles" role="group" aria-label="Style"></div>
   <button id="rot" aria-pressed="true">rotate</button>
+  <button id="catsBtn" aria-pressed="true">cats</button>
   <button id="png">render png</button>
 </div>
 
@@ -170,6 +171,7 @@ const S = { seed: DAILY, daily: true, n: 12, chaos: 0.5, hUser: false, cUser: fa
   if (c != null && c !== '' && !isNaN(+c)) { S.chaos = clamp(+c / 100, 0, 1); S.cUser = true; }
 })();
 if (matchMedia('(prefers-reduced-motion: reduce)').matches) S.rotate = S.rotatePref = false;
+try { S.cats = localStorage.getItem('babelstack-cats') !== 'off'; } catch { S.cats = true; }
 const code = () => S.seed + (S.hUser ? '-h' + S.n : '') + (S.cUser ? '-c' + Math.round(S.chaos * 100) : '');
 const shareURL = () => location.href.split(/[?#]/)[0] + `?seed=${S.seed}${S.hUser ? '&h=' + S.n : ''}${S.cUser ? '&c=' + Math.round(S.chaos * 100) : ''}#${code()}`;
 function writeURL() { if (S.daily && !S.hUser && !S.cUser) return; try { history.replaceState(null, '', shareURL().replace(location.href.split(/[?#]/)[0], '')); } catch { try { history.replaceState(null, '', '#' + code()); } catch {} } }
@@ -675,7 +677,7 @@ let cats = [];
 const yellCanvas = (() => { const c = canvas2d(256, 80), x = c.getContext('2d'); x.font = '700 40px "Space Mono", ui-monospace, monospace'; x.fillStyle = '#fff'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('mrrow!', 128, 42); return c; })();
 const yellMat = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(yellCanvas), depthTest: false, transparent: true }), yell = new THREE.Sprite(yellMat);
 yell.scale.set(1.2, 0.375, 1); yell.renderOrder = 11; yell.visible = false; scene.add(yell);
-const catList = () => { const n = cats.map(c => c.name); return n.length ? ' · with ' + (n.length > 1 ? n.slice(0, -1).join(', ') + ' & ' + n[n.length - 1] : n[0]) : ''; };
+const catList = () => { if (!S.cats) return ''; const n = cats.map(c => c.name); return n.length ? ' · with ' + (n.length > 1 ? n.slice(0, -1).join(', ') + ' & ' + n[n.length - 1] : n[0]) : ''; };
 function makeCats(P) {
   for (const c of cats) { c.g.traverse(o => o.geometry && o.geometry.dispose()); scene.remove(c.g); }
   const r = stream(P.seed, 'cats'), names = Object.keys(CATS), spots = roofSpots(P, r), roads = P.catRoads;
@@ -693,10 +695,11 @@ function makeCats(P) {
     const ls = new LineSegments2(lg, lineMat.d); g.add(ls); scene.add(g);
     return { name, mode, d, g, m, ls, face: d.yaw };
   });
+  cats.forEach(c => { c.g.visible = S.cats; });
 }
 const cv = new THREE.Vector3();
 function updateCats(t) {
-  yell.visible = false;
+  yell.visible = false; if (!S.cats) return;
   for (const c of cats) {
     const d = c.d, g = c.g; let breathe = 1, bob = 0, talk = false;
     if (c.mode === 'walk') {   // out along the road, pause, back again, pause
@@ -925,7 +928,7 @@ function pick(e) {
   const rc = renderer.domElement.getBoundingClientRect(), px = e.clientX - rc.left, py = e.clientY - rc.top, P = S.plan;
   ray.setFromCamera(new THREE.Vector2(px / rc.width * 2 - 1, -(py / rc.height) * 2 + 1), camera);
   walkMesh.boundingSphere = null;
-  const hit = ray.intersectObjects([...tower.children.filter(o => o.userData.role), walkMesh, ...cats.map(c => c.m)], false)[0];
+  const hit = ray.intersectObjects([...tower.children.filter(o => o.userData.role), walkMesh, ...(S.cats ? cats.map(c => c.m) : [])], false)[0];
   if (!hit) return hideNote();
   if (hit.object.userData.cat) { const n = hit.object.userData.cat, C = CATS[n]; return showNote(px, py, 'Resident cat', `${n} · ${C.persona}`, C.line); }
   if (hit.object === walkMesh) {
@@ -990,6 +993,7 @@ function syncUI() {
   cEl.value = Math.round(S.chaos * 100); $('cv').textContent = (S.chaos).toFixed(2).replace(/^0/, '');
   for (const b of $('styles').children) b.setAttribute('aria-pressed', String(b.dataset.style === S.style));
   $('rot').setAttribute('aria-pressed', String(S.rotate));
+  $('catsBtn').setAttribute('aria-pressed', String(S.cats));
 }
 const hist = [];
 function setSeed(seed, daily = false, back = false) {
@@ -1019,6 +1023,12 @@ $('styles').addEventListener('click', e => {
 });
 $('rot').onclick = () => { setRotate(!S.rotate); S.rotatePref = S.rotate; };
 $('png').onclick = exportPNG;
+$('catsBtn').onclick = () => {
+  S.cats = !S.cats; try { localStorage.setItem('babelstack-cats', S.cats ? 'on' : 'off'); } catch {}
+  cats.forEach(c => { c.g.visible = S.cats; }); yell.visible = false; hideNote();
+  if (S.plan) $('pm').textContent = plateText(S.plan)[2];
+  syncUI(); dirty = true;
+};
 addEventListener('keydown', e => {
   if (e.target === seedEl || e.repeat) return;
   if (e.key.length === 1) { typed = (typed + e.key.toLowerCase()).slice(-6); if (typed === 'escher') { flipTo = flipTo ? 0 : Math.PI; typed = ''; } }
