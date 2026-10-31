@@ -38,7 +38,10 @@ button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:v
 #plate b{font-size:14px;line-height:1.25;text-wrap:balance}
 #plate span{font-size:10.5px;opacity:.8;font-variant-numeric:tabular-nums}
 @media (max-width:520px){ #plate{padding:6px 8px;max-width:52vw} #plate b{font-size:12px} #plate span{font-size:9.5px} }
-#paper{position:absolute;inset:0;pointer-events:none}
+#paper{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+#paper[data-s="dusk"]::after{content:"";position:absolute;top:10%;left:72%;width:90px;height:1px;background:linear-gradient(90deg,#fff,transparent);transform:rotate(-20deg);opacity:0;animation:shoot 13s 4s infinite}
+@keyframes shoot{0%{opacity:0;translate:0 0}2%{opacity:1}6%,100%{opacity:0;translate:-260px 95px}}
+@media (prefers-reduced-motion:reduce){#paper::after{animation:none!important}}
 #note{position:absolute;z-index:3;max-width:min(300px,78vw);display:grid;gap:3px;padding:9px 12px 10px;background:var(--bg);border:1px solid var(--ink);box-shadow:4px 4px 0 color-mix(in srgb,var(--ink) 18%,transparent);pointer-events:none}
 #note[hidden]{display:none}
 #note small{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;opacity:.7}
@@ -132,7 +135,10 @@ function generate(seed, n, chaos) {
   const roads = sides.slice(0, rd() < 0.5 ? 2 : 3).map(s => ({ side: s, off: +(rd() - 0.5).toFixed(3), len: +(16 + rd() * 10).toFixed(2) }));
   const gr = stream(seed, 'ground'), gk = gr();
   const ground = { kind: gk < 0.28 ? 'plaza' : gk < 0.58 ? 'sea' : gk < 0.79 ? 'dunes' : 'meadow', rnd: Array.from({ length: 90 }, () => +gr().toFixed(4)) };
-  return { seed, n, chaos: c, blocks, ramp, ramp2, roads, ground, top: +top.toFixed(3) };
+  const wr = stream(seed, 'weather')();   // magic words in a phrase seed summon the weather
+  const weather = /snow|winter|christmas|noel|hiver|neige/.test(seed) || /^daily-\d{4}-(12|01|02)-/.test(seed) ? 'snow' : /rain|pluie|storm/.test(seed) ? 'rain' : wr < 0.1 ? 'rain' : wr < 0.17 ? 'snow' : 'clear';
+  const halloween = /halloween|pumpkin|citrouille/.test(seed) || /^daily-\d{4}-10-31$/.test(seed);
+  return { seed, n, chaos: c, blocks, ramp, ramp2, roads, ground, weather, halloween, top: +top.toFixed(3) };
 }
 const ADJ = ['Ascending', 'Inverted', 'Patient', 'Unfinished', 'Silent', 'Recursive', 'Borrowed', 'Hollow', 'Sleepless', 'Seventh', 'Folded', 'Wandering', 'Salt', 'Amber', 'Paper', 'Lantern', 'Drowned', 'Upward'];
 const NOUN = ['Archive', 'Stair', 'Lighthouse', 'Cistern', 'Observatory', 'Granary', 'Belfry', 'Library', 'Ministry', 'Aviary', 'Theatre', 'Monastery', 'Mill', 'Almanac', 'Customs House', 'Clocktower'];
@@ -492,11 +498,13 @@ function buildGround(P) {
   part(boxGeo(P.plinth, 0.6, P.plinth).translate(0, 0.3, 0), 'plain', 's');
   const G = P.ground, kind = G.kind, h = P.plinth / 2, M = 6.5, S2 = P.plinth + 2 * M, top = kind === 'sea' ? 0.18 : 0;
   if (kind !== 'plaza') part(boxGeo(S2, 1.2 + top, S2).translate(0, top - (1.2 + top) / 2, 0), ['plain', 'plain', 'g', 'plain', 'plain', 'plain'], 's');
-  const rw = kind === 'meadow' ? 1.3 : 2.4, lanes = [];
+  const rw = kind === 'meadow' ? 1.3 : 2.4, lanes = []; P.catRoads = [];
   for (const rd of P.roads) {
     const nx = [1, 0, -1, 0][rd.side], nz = [0, 1, 0, -1][rd.side], off = rd.off * (P.plinth - 4), len = kind === 'plaza' ? rd.len : M;
     const along = d => [nx * (h + d) + (nz ? off : 0), nz * (h + d) + (nx ? off : 0)], [cx, cz] = along(len / 2);
     lanes.push({ nx, nz, off });
+    { const ry = kind === 'sea' ? 0.6 : 0.14, [ax, az] = along(0.4), [bx, bz] = along(Math.min(len * 0.85, 7));
+      P.catRoads.push({ a: new THREE.Vector3(ax, ry, az), b: new THREE.Vector3(bx, ry, bz), side: new THREE.Vector3(nz ? 1 : 0, 0, nx ? 1 : 0).multiplyScalar(rw / 2 - 0.35) }); }
     if (kind === 'sea') {   // roads become piers on pilings
       part(boxGeo(nx ? len : rw, 0.15, nz ? len : rw).translate(cx, 0.525, cz), 'plain', 's');
       for (let d = 1; d < len; d += 1.6) for (const sd of [-1, 1]) {
@@ -552,7 +560,7 @@ let rampPath = [], walkers = [], birds = [];
 const lifeMat = new THREE.MeshBasicMaterial({ color: 0x333333, side: THREE.DoubleSide }), lampMat = new THREE.MeshBasicMaterial({ color: 0xffb25c });
 const figGeo = mergeGeometries([new THREE.BoxGeometry(0.15, 0.28, 0.1).translate(0, 0.16, 0), new THREE.BoxGeometry(0.11, 0.11, 0.11).translate(0, 0.37, 0)]);
 const wing = s => new THREE.BoxGeometry(0.34, 0.02, 0.09).translate(s * 0.17, 0, 0).rotateZ(s * 0.45);
-const MAXW = 12, MAXB = 6;
+const MAXW = 12, MAXB = 8;
 const walkMesh = new THREE.InstancedMesh(figGeo, lifeMat, MAXW), lampMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.07, 0.09, 0.07).translate(0.12, 0.2, 0.05), lampMat, MAXW);
 const birdMesh = new THREE.InstancedMesh(mergeGeometries([wing(-1), wing(1)]), lifeMat, MAXB);
 for (const m of [walkMesh, lampMesh, birdMesh]) { m.frustumCulled = false; m.castShadow = m !== lampMesh; m.count = 0; scene.add(m); }
@@ -563,7 +571,9 @@ function makeLife(P) {
   if (P.chaos > 0.45 && r() < 0.75) walkers[walkers.length - 1].inv = true;   // walks the underside; nobody has told them
   walkers.forEach(w => { w.laps = 100 + Math.floor(r() * 9000); });
   walkMesh.count = lampMesh.count = walkers.length; birdMesh.count = birds.length;
-  makeClouds(P);
+  if (P.halloween) { birds = Array.from({ length: 8 }, () => ({ a: r() * 6.28, rad: 2.5 + r() * 3.5, y: P.top - 3 + r() * 6, w: (0.5 + r() * 0.5) * (r() < 0.5 ? -1 : 1), ph: r() * 6.28, bat: true })); birdMesh.count = 8; }
+  makeClouds(P); makeCats(P); makeWeather(P);
+  const tb = P.blocks[P.n - 1]; beam.position.set(tb.x, P.top + 0.3, tb.z);
 }
 // Low-poly clouds that drift through the stack and cast shadows across it.
 let clouds = [];
@@ -598,12 +608,153 @@ function updateLife(t) {
   birds.forEach((b, i) => {
     const a = b.a + b.w * t;
     dummy.position.set(Math.cos(a) * b.rad, b.y + Math.sin(t * 0.7 + b.ph) * 0.35, Math.sin(a) * b.rad);
-    dummy.rotation.set(0, -a + (b.w > 0 ? 0 : Math.PI), 0); dummy.scale.set(1, 0.25 + Math.abs(Math.sin(t * 5 + b.ph)) * 1.4, 1); dummy.updateMatrix();
+    dummy.rotation.set(0, -a + (b.w > 0 ? 0 : Math.PI), 0); dummy.scale.set(b.bat ? 0.8 : 1, 0.25 + Math.abs(Math.sin(t * (b.bat ? 12 : 5) + b.ph)) * 1.4, 1); dummy.updateMatrix();
     birdMesh.setMatrixAt(i, dummy.matrix);
   });
+  updateCats(t); updateWeather(t); beam.rotation.y = t * 0.5;
   for (const c of clouds) { const a = c.a + c.w * t; c.g.position.set(Math.cos(a) * c.rad, c.y + Math.sin(t * 0.3 + c.ph) * 0.25, Math.sin(a) * c.rad); c.g.rotation.y = -a; }
   walkMesh.instanceMatrix.needsUpdate = lampMesh.instanceMatrix.needsUpdate = birdMesh.instanceMatrix.needsUpdate = true;
 }
+
+// ===== the cats of TwoStoryTails: seeded guests, each true to their persona =====
+const CATS = {
+  Cali:   { base: '#f1ece4', marks: [['#d98a3a', 6, 16], ['#2b2623', 5, 13]], persona: 'The Princess', line: 'Runs the downstairs.', size: 0.95 },
+  Neo:    { base: '#f4f2ed', marks: [['#dedad2', 3, 7]], persona: 'The Cuddler', line: 'Big, unbothered. Mostly naps.', size: 1.18 },
+  Ramses: { base: '#d8b066', marks: [['#2e2418', 30, 4]], persona: 'The Adventurer', line: 'The curious baby. Leaps around investigating, annoys Diego on purpose.', size: 1, tall: true },
+  Diego:  { base: '#c47d3c', marks: [['#3a2414', 20, 6, '#9a5a28']], persona: 'The Loyalist', line: 'Grumpy, talkative, spoiled. Yells until someone pays attention.', size: 1.05 },
+};
+const CAT_TEX = {}, CAT_MAT = {};
+function catLit(name) {
+  if (CAT_MAT[name]) return CAT_MAT[name];
+  const C = CATS[name], c = canvas2d(128, 128), x = c.getContext('2d'), r = mulberry32(hash('coat-' + name));
+  x.fillStyle = C.base; x.fillRect(0, 0, 128, 128);
+  for (const [col, n, rad, inner] of C.marks) for (let i = 0; i < n; i++) {
+    const px = r() * 128, py = r() * 128, rr = rad * (0.6 + r() * 0.8), ry = rr * (0.6 + r() * 0.4);
+    for (const ox of [-128, 0, 128]) for (const oy of [-128, 0, 128]) {   // drawn wrapped so the coat tiles
+      x.fillStyle = col; x.beginPath(); x.ellipse(px + ox, py + oy, rr, ry, 0, 0, 7); x.fill();
+      if (inner) { x.fillStyle = inner; x.beginPath(); x.ellipse(px + ox, py + oy, rr * 0.5, ry * 0.5, 0, 0, 7); x.fill(); }
+    }
+  }
+  const t = CAT_TEX[name] = mkTex(c); t.repeat.set(2.5, 2.5);
+  return CAT_MAT[name] = new THREE.MeshLambertMaterial({ map: t, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+}
+function catGeo(pose, tall) {   // faces +x
+  const P = [], L = tall ? 0.27 : 0.17, ek = tall ? 1.5 : 1;
+  const ear = (x, y, z) => new THREE.ConeGeometry(0.04 * ek, 0.09 * ek, 4).rotateY(Math.PI / 4).translate(x, y + 0.045 * ek, z);
+  const head = (x, y) => { P.push(boxGeo(0.17, 0.15, 0.16).translate(x, y, 0), ear(x - 0.01, y + 0.075, 0.045), ear(x - 0.01, y + 0.075, -0.045)); };
+  if (pose === 'walk') {
+    for (const [lx, lz] of [[0.15, 0.06], [0.15, -0.06], [-0.15, 0.06], [-0.15, -0.06]]) P.push(boxGeo(0.07, L, 0.07).translate(lx, L / 2, lz));
+    P.push(boxGeo(0.42, 0.17, 0.17).translate(0, L + 0.08, 0)); head(0.26, L + 0.19);
+    P.push(boxGeo(0.045, 0.3, 0.045).translate(0, 0.15, 0).rotateZ(0.55).translate(-0.19, L + 0.12, 0));
+  }
+  if (pose === 'loaf') { P.push(boxGeo(0.4, 0.17, 0.22).translate(0, 0.085, 0), boxGeo(0.32, 0.05, 0.05).translate(-0.02, 0.025, 0.135)); head(0.22, 0.18); }
+  if (pose === 'sit') {
+    P.push(boxGeo(0.22, 0.26, 0.18).translate(-0.03, 0.13, 0), boxGeo(0.06, 0.2, 0.06).translate(0.09, 0.1, 0.05), boxGeo(0.06, 0.2, 0.06).translate(0.09, 0.1, -0.05));
+    P.push(boxGeo(0.3, 0.05, 0.05).translate(-0.02, 0.025, 0.12)); head(0.05, 0.34);
+  }
+  const g = mergeGeometries(P); P.forEach(q => q.dispose()); return g;
+}
+function onFoot(c, p, m) {
+  const a = c.rot * Math.PI / 2, dx = p.x - c.x, dz = p.z - c.z;
+  return Math.abs(dx * Math.cos(a) - dz * Math.sin(a)) <= c.w / 2 + m && Math.abs(dx * Math.sin(a) + dz * Math.cos(a)) <= c.d / 2 + m;
+}
+function roofSpots(P, r) {   // one free spot on each roof that nothing sits on
+  const out = [];
+  for (const b of P.blocks) {
+    if (b.type === 'ruin') continue;
+    for (let k = 0; k < 3; k++) {
+      const v = new THREE.Vector3((r() - 0.5) * Math.max(0, b.w - 1.4), 0, (r() - 0.5) * Math.max(0, b.d - 1.4)).applyAxisAngle(UP, b.rot * Math.PI / 2);
+      if (b.type === 'drum' && Math.hypot(v.x, v.z) > b.w / 2 - 0.7) continue;
+      const p = new THREE.Vector3(b.x + v.x, b.y + b.h, b.z + v.z);
+      if (!P.blocks.some(c => c !== b && c.y < p.y + 0.7 && c.y + c.h > p.y - 0.05 && onFoot(c, p, 0.3))) { out.push({ p, i: b.i }); break; }
+    }
+  }
+  return out;
+}
+let cats = [];
+const yellCanvas = (() => { const c = canvas2d(256, 80), x = c.getContext('2d'); x.font = '700 40px "Space Mono", ui-monospace, monospace'; x.fillStyle = '#fff'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('mrrow!', 128, 42); return c; })();
+const yellMat = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(yellCanvas), depthTest: false, transparent: true }), yell = new THREE.Sprite(yellMat);
+yell.scale.set(1.2, 0.375, 1); yell.renderOrder = 11; yell.visible = false; scene.add(yell);
+const catList = () => { const n = cats.map(c => c.name); return n.length ? ' · with ' + (n.length > 1 ? n.slice(0, -1).join(', ') + ' & ' + n[n.length - 1] : n[0]) : ''; };
+function makeCats(P) {
+  for (const c of cats) { c.g.traverse(o => o.geometry && o.geometry.dispose()); scene.remove(c.g); }
+  const r = stream(P.seed, 'cats'), names = Object.keys(CATS), spots = roofSpots(P, r), roads = P.catRoads;
+  let chosen = names.filter(() => r() < 0.62); if (!chosen.length) chosen = [names[Math.floor(r() * 4)]];
+  if (/cats|twostorytails|cali|neo|ramses|diego/.test(P.seed)) chosen = names;
+  const take = () => spots.length ? spots.splice(Math.floor(r() * spots.length), 1)[0] : null;
+  cats = chosen.map(name => {
+    const C = CATS[name], q = r(), d = { ph: r() * 10, sp: 0.045 + r() * 0.035, yaw: r() * 6.28, lat: r() - 0.5, road: roads[Math.floor(r() * roads.length)] };
+    let mode = name === 'Neo' ? (q < 0.7 ? 'nap' : 'roadnap') : name === 'Ramses' ? (q < 0.8 ? 'hop' : 'walk') : name === 'Diego' ? (q < 0.7 ? 'walk' : 'perch') : (q < 0.5 ? 'walk' : 'perch');
+    if (mode === 'hop') { d.spots = [take(), take(), take()].filter(Boolean); if (d.spots.length < 2) mode = 'walk'; }
+    if (mode === 'nap' || mode === 'perch') { d.spot = take(); if (!d.spot) mode = mode === 'nap' ? 'roadnap' : 'walk'; }
+    const geo = catGeo(mode === 'nap' || mode === 'roadnap' ? 'loaf' : mode === 'perch' ? 'sit' : 'walk', C.tall).scale(2.3 * C.size, 2.3 * C.size, 2.3 * C.size);
+    const g = new THREE.Group(), m = new THREE.Mesh(geo, catLit(name)); m.castShadow = true; m.userData.cat = name; g.add(m);
+    const eg = new THREE.EdgesGeometry(geo, 20), lg = new LineSegmentsGeometry(); lg.setPositions(eg.attributes.position.array); eg.dispose();
+    const ls = new LineSegments2(lg, lineMat.d); g.add(ls); scene.add(g);
+    return { name, mode, d, g, m, ls, face: d.yaw };
+  });
+}
+const cv = new THREE.Vector3();
+function updateCats(t) {
+  yell.visible = false;
+  for (const c of cats) {
+    const d = c.d, g = c.g; let breathe = 1, bob = 0, talk = false;
+    if (c.mode === 'walk') {   // out along the road, pause, back again, pause
+      const f = (t * d.sp + d.ph) % 1, R = d.road; let u, dir;
+      if (f < 0.4) { u = f / 0.4; dir = 1; } else if (f < 0.5) { u = 1; dir = 0; } else if (f < 0.9) { u = 1 - (f - 0.5) / 0.4; dir = -1; } else { u = 0; dir = 0; }
+      g.position.lerpVectors(R.a, R.b, u).addScaledVector(R.side, d.lat);
+      if (dir) { cv.subVectors(R.b, R.a).multiplyScalar(dir); c.face = Math.atan2(-cv.z, cv.x); bob = Math.abs(Math.sin(t * 13)) * 0.02; } else talk = true;
+    } else if (c.mode === 'hop') {   // sits, stares at the next roof, leaps
+      const S = d.spots, T = 2.8, tt = t + d.ph * 3, k = Math.floor(tt / T) % S.length, f = (tt % T) / T, A = S[k].p, B = S[(k + 1) % S.length].p;
+      c.face = Math.atan2(-(B.z - A.z), B.x - A.x);
+      if (f < 0.72) g.position.copy(A); else { const u = (f - 0.72) / 0.28; g.position.lerpVectors(A, B, u); g.position.y += Math.sin(u * Math.PI) * (1 + A.distanceTo(B) * 0.22); }
+    } else {
+      const spot = d.spot ? d.spot.p : cv.lerpVectors(d.road.a, d.road.b, 0.35 + 0.4 * (d.ph % 1)).addScaledVector(d.road.side, d.lat);
+      g.position.copy(spot);
+      if (c.mode === 'perch') { c.face = d.yaw + 0.5 * Math.sin(t * 0.2 + d.ph); talk = Math.sin(t * 0.45 + d.ph) > 0.75; }
+      else { c.face = d.yaw; breathe = 1 + 0.045 * Math.sin(t * 1.5 + d.ph); }
+    }
+    g.position.y += bob; g.rotation.y = c.face; g.scale.set(1, breathe, 1);
+    if (talk && c.name === 'Diego' && !still) { yell.visible = true; yell.position.copy(g.position).add(cv.set(0, 1.6, 0)); }
+  }
+}
+
+// ===== weather: ASCII rain and snow, falling through the drawing =====
+function glyphTex(ch) { const c = canvas2d(64, 64), x = c.getContext('2d'); x.fillStyle = '#fff'; x.font = '700 44px "Space Mono", ui-monospace, monospace'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(ch, 32, 34); return new THREE.CanvasTexture(c); }
+const WX = { rain: glyphTex('/'), snow: glyphTex('*') }, wxMat = new THREE.PointsMaterial({ size: 15, sizeAttenuation: false, transparent: true, depthWrite: false, opacity: 0.6 });
+let wx = null;
+function makeWeather(P) {
+  if (wx) { wx.geometry.dispose(); scene.remove(wx); wx = null; }
+  if (P.weather === 'clear') return;
+  const r = stream(P.seed, 'wx'), n = 280, a = new Float32Array(n * 3), S = (P.plinth + 13) / 2, H = P.top + 6;
+  for (let i = 0; i < n; i++) { a[i * 3] = (r() * 2 - 1) * S; a[i * 3 + 1] = r() * H; a[i * 3 + 2] = (r() * 2 - 1) * S; }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(a, 3));
+  wxMat.map = WX[P.weather]; wxMat.needsUpdate = true;
+  wx = new THREE.Points(g, wxMat); wx.frustumCulled = false; wx.userData = { S, H, v: P.weather === 'rain' ? 9 : 1.1, lt: 0 }; scene.add(wx);
+}
+function updateWeather(t) {
+  if (!wx) return; const u = wx.userData, dt = Math.min(0.1, Math.max(0, t - u.lt)), a = wx.geometry.attributes.position.array, rain = u.v > 2; u.lt = t;
+  for (let i = 0; i < a.length; i += 3) {
+    a[i + 1] -= u.v * dt; a[i] += (rain ? -0.25 * u.v : Math.sin(t + i) * 0.35) * dt;
+    if (a[i + 1] < 0) a[i + 1] += u.H; if (a[i] < -u.S) a[i] += 2 * u.S;
+  }
+  wx.geometry.attributes.position.needsUpdate = true;
+}
+// Hallowe'en: pumpkins on free roofs and around the plinth, lit from inside at Dusk.
+function buildPumpkins(P) {
+  if (!P.halloween) return;
+  const r = stream(P.seed, 'pumpkins'), spots = roofSpots(P, r).map(q => q.p), h = P.plinth / 2;
+  for (let i = 0; i < 7; i++) { const a = r() * 6.28, d = h - 0.7 - r() * 1.8, q = new THREE.Vector3(Math.cos(a) * d, 0.6, Math.sin(a) * d); if (!onFoot(P.blocks[0], q, 0.5)) spots.push(q); }
+  for (const q of spots) {
+    if (r() < 0.3) continue; const k = 0.75 + r() * 0.6;
+    part(new THREE.SphereGeometry(0.3 * k, 8, 4).scale(1, 0.72, 1).translate(q.x, q.y + 0.21 * k, q.z), 'pumpkin', 'd');
+    part(boxGeo(0.06, 0.14, 0.06).translate(q.x, q.y + 0.46 * k, q.z), 'door', null);
+  }
+}
+// A lighthouse beam sweeps from the top of sea towers at Dusk.
+const beam = new THREE.Mesh(new THREE.ConeGeometry(1.4, 13, 20, 1, true).translate(0, -6.5, 0).rotateZ(Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: 0xffd9a0, transparent: true, opacity: 0.13, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+beam.visible = false; scene.add(beam);
 
 // ===== the tower draws itself from the ground up (a clipping plane that rises) =====
 const clip = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e5);
@@ -614,8 +765,8 @@ let reveal = null;
 const ROMAN = n => [[10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']].reduce((o, [v, r]) => { while (n >= v) { o += r; n -= v; } return o; }, '');
 const GROUND_WORD = { plaza: 'on a plaza', sea: 'at sea', dunes: 'in the dunes', meadow: 'in a meadow' };
 function plateText(P) {
-  return [S.daily ? 'Tower of the day · ' + DAILY_LABEL.slice(7) : 'Plate ' + (100 + hash(P.seed) % 900),
-    towerName(P.seed), `${ROMAN(P.n)} storeys · ${P.ramp.turns.toFixed(1)} turns · ${Math.round(P.top * 3.5)} m · ${GROUND_WORD[P.ground.kind]}`];
+  return [(S.daily ? 'Tower of the day · ' + DAILY_LABEL.slice(7) : 'Plate ' + (100 + hash(P.seed) % 900)) + (P.halloween ? ' · Hallowe\'en' : '') + (P.weather !== 'clear' ? ' · ' + P.weather : ''),
+    towerName(P.seed), `${ROMAN(P.n)} storeys · ${P.ramp.turns.toFixed(1)} turns · ${Math.round(P.top * 3.5)} m · ${GROUND_WORD[P.ground.kind]}${catList()}`];
 }
 function drawPlate(x, k, ink) {
   const [kick, name, meta] = plateText(S.plan), F = '"Space Mono", ui-monospace, monospace', pad = 11 * k, X = 16 * k, Y = 16 * k;
@@ -635,10 +786,10 @@ function build(animate = false) {
   disposeTower(); buckets = {}; edges = { s: [], d: [] };
   const P = S.plan = generate(S.seed, S.n, S.chaos);
   for (const b of P.blocks) buildBlock(b);
-  buildRamps(P); buildGround(P);
+  buildRamps(P); buildGround(P); buildPumpkins(P);
   for (const role in buckets) {
     const g = mergeGeometries(buckets[role]); buckets[role].forEach(x => x.dispose());
-    if (role !== 'door' && role !== 'g') toneGeo(g, P.top);
+    if (role !== 'door' && role !== 'g' && role !== 'pumpkin') toneGeo(g, P.top);
     const m = new THREE.Mesh(g); m.userData.role = role; m.castShadow = m.receiveShadow = true; tower.add(m);
   }
   for (const k of ['s', 'd']) {
@@ -681,7 +832,13 @@ function applyStyle() {
   lampMesh.visible = S.style === 'dusk';
   cloudLit.color.set({ sketch: '#f6f4ef', clay: '#f1dccb', blueprint: '#4a71b4', dusk: '#4d4260' }[S.style] || '#ffffff');
   for (const c of clouds) { c.m.material = L ? cloudFlat : cloudLit; c.ls.visible = !!st.edge; }
-  paper.style.background = PAPER[S.style] || 'none';
+  for (const c of cats) { c.m.material = L ? cloudFlat : catLit(c.name); c.ls.visible = !!st.edge; }
+  yellMat.color.set(L ? INK : st.ui);
+  paper.style.background = PAPER[S.style] || 'none'; paper.dataset.s = S.style;
+  mats.pumpkin = L ? new THREE.MeshBasicMaterial({ color: 0xffffff, ...off }) : new THREE.MeshLambertMaterial({ color: '#d9741f', emissive: S.style === 'dusk' ? '#ff7a1a' : '#000000', emissiveIntensity: 0.55, ...off });
+  for (const o of tower.children) if (o.userData.role === 'pumpkin') o.material = mats.pumpkin;
+  if (wx) wx.visible = !L; wxMat.color.set(st.ui);
+  beam.visible = S.style === 'dusk' && S.plan && S.plan.ground.kind === 'sea';
   hlMat.color.set({ sketch: '#b0442a', clay: '#3a2318', blueprint: '#ffd75a', dusk: '#ffb25c' }[S.style] || '#d9442a'); hideNote();
   if (st.edge) { lineMat.s.color.set(st.edge); lineMat.d.color.set(st.edge); }
   S.lineBase = st.ew || 1.5; setLineWidths(renderer.getPixelRatio());
@@ -724,7 +881,7 @@ let resumeT = 0;
 controls.addEventListener('start', () => { controls.autoRotate = false; clearTimeout(resumeT); });
 controls.addEventListener('end', () => { clearTimeout(resumeT); resumeT = setTimeout(() => { controls.autoRotate = S.rotate; }, 4000); });
 controls.addEventListener('change', () => { dirty = true; });
-let tick = 0;
+let tick = 0, flip = 0, flipTo = 0, typed = '';   // type "escher": the drawing turns upside down and the stack starts to hang
 renderer.setAnimationLoop(() => {
   const now = performance.now(), moved = controls.update();
   if (controls.autoRotate && mats.g && S.plan.ground.kind === 'sea') mats.g.map.offset.set((now * 0.00002) % 1, 0);
@@ -734,6 +891,8 @@ renderer.setAnimationLoop(() => {
     clip.constant = k < 1 ? -1.4 + e * (reveal.top + 1.4) : 1e5; if (k >= 1) reveal = null; dirty = true;
   }
   const alive = !still && document.visibilityState === 'visible';
+  if (Math.abs(flipTo - flip) > 1e-3) { flip += (flipTo - flip) * 0.06; dirty = true; }
+  if (flip) camera.rotateZ(flip);   // roll after the orbit's lookAt
   if (alive) updateLife(now / 1000);
   // walkers alone are drawn at half rate, so an idle tower stays cheap on a phone
   if (moved || dirty || controls.autoRotate || (alive && (tick++ & 1))) { renderer.render(scene, camera); dirty = false; }
@@ -766,8 +925,9 @@ function pick(e) {
   const rc = renderer.domElement.getBoundingClientRect(), px = e.clientX - rc.left, py = e.clientY - rc.top, P = S.plan;
   ray.setFromCamera(new THREE.Vector2(px / rc.width * 2 - 1, -(py / rc.height) * 2 + 1), camera);
   walkMesh.boundingSphere = null;
-  const hit = ray.intersectObjects([...tower.children.filter(o => o.userData.role), walkMesh], false)[0];
+  const hit = ray.intersectObjects([...tower.children.filter(o => o.userData.role), walkMesh, ...cats.map(c => c.m)], false)[0];
   if (!hit) return hideNote();
+  if (hit.object.userData.cat) { const n = hit.object.userData.cat, C = CATS[n]; return showNote(px, py, 'Resident cat', `${n} · ${C.persona}`, C.line); }
   if (hit.object === walkMesh) {
     const w = walkers[hit.instanceId], laps = w.laps + Math.floor(Math.abs(w.v) * performance.now() / 1000);
     return showNote(px, py, 'Resident no. ' + (hit.instanceId + 1), w.inv ? 'Walks the underside. Nobody has told them.' : w.v > 0 ? 'Climbing to the top terrace' : 'Walking back down, for now', `lap ${laps.toLocaleString('en-US')} · has not yet arrived`);
@@ -861,6 +1021,7 @@ $('rot').onclick = () => { setRotate(!S.rotate); S.rotatePref = S.rotate; };
 $('png').onclick = exportPNG;
 addEventListener('keydown', e => {
   if (e.target === seedEl || e.repeat) return;
+  if (e.key.length === 1) { typed = (typed + e.key.toLowerCase()).slice(-6); if (typed === 'escher') { flipTo = flipTo ? 0 : Math.PI; typed = ''; } }
   if (e.code === 'Space') { e.preventDefault(); setSeed(newSeed()); }
   if (e.key === 'Escape') hideNote();
   if (e.key === 'ArrowLeft' && hist.length) { const [sd, dl] = hist.pop(); setSeed(sd, dl, true); }
